@@ -4,7 +4,7 @@ export interface SymbolMap<T> {
   [symbol: string]: T;
 }
 
-export type eNetwork = eEthereumNetwork;
+export type eNetwork = eEthereumNetwork | ePolygonNetwork | eAvalancheNetwork | eXDaiNetwork;
 
 export enum eEthereumNetwork {
   kovan = 'kovan',
@@ -13,6 +13,25 @@ export enum eEthereumNetwork {
   coverage = 'coverage',
   hardhat = 'hardhat',
   tenderlyMain = 'tenderlyMain',
+  tenderly = 'tenderly',
+  goerli = 'goerli',
+  sepolia = 'sepolia',
+  baseSepolia = 'baseSepolia',
+  bscTestnet = 'bscTestnet',
+}
+
+export enum ePolygonNetwork {
+  matic = 'matic',
+  mumbai = 'mumbai',
+}
+
+export enum eAvalancheNetwork {
+  avalanche = 'avalanche',
+  fuji = 'fuji',
+}
+
+export enum eXDaiNetwork {
+  xdai = 'xdai',
 }
 
 export enum eContractid {
@@ -142,7 +161,7 @@ export enum ProtocolErrors {
   INVALID_LIQUIDATION_PROTOCOL_FEE = '70', // 'Invalid liquidation protocol fee for the reserve'
   INVALID_EMODE_CATEGORY = '71', // 'Invalid eMode category for the reserve'
   INVALID_UNBACKED_MINT_CAP = '72', // 'Invalid unbacked mint cap for the reserve'
-  INVALID_DEBT_CEILING = '73', // 'Invalid debt ceiling for the reserve
+  INVALID_DEBT_CEILING = '73', // 'Invalid debt ceiling for the reserve'
   INVALID_RESERVE_INDEX = '74', // 'Invalid reserve index'
   ACL_ADMIN_CANNOT_BE_ZERO = '75', // 'ACL admin cannot be set to the zero address'
   INCONSISTENT_PARAMS_LENGTH = '76', // 'Array parameters that should be equal length are not'
@@ -346,12 +365,11 @@ export type iParamsPerNetwork<T> = iEthereumParamsPerNetwork<T>;
 export interface iParamsPerNetworkAll<T> extends iEthereumParamsPerNetwork<T> {}
 
 export interface iEthereumParamsPerNetwork<T> {
-  [eEthereumNetwork.coverage]: T;
-  [eEthereumNetwork.kovan]: T;
-  [eEthereumNetwork.ropsten]: T;
   [eEthereumNetwork.main]: T;
   [eEthereumNetwork.hardhat]: T;
-  [eEthereumNetwork.tenderlyMain]: T;
+  [eEthereumNetwork.sepolia]: T;
+  [eEthereumNetwork.baseSepolia]: T;
+  [eEthereumNetwork.bscTestnet]: T;
 }
 
 export enum RateMode {
