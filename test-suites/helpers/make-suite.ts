@@ -36,7 +36,7 @@ import { AaveOracle, ACLManager, StableDebtToken, VariableDebtToken } from '../.
 import { HardhatRuntimeEnvironment } from 'hardhat/types';
 import { usingTenderly } from '../../helpers/tenderly-utils';
 import { tEthereumAddress } from '../../helpers/types';
-
+import { FlashLiquidationAdapter } from '../../types/FlashLiquidationAdapter';
 declare var hre: HardhatRuntimeEnvironment;
 
 export interface SignerWithAddress {
@@ -56,6 +56,7 @@ export interface TestEnv {
   helpersContract: AaveProtocolDataProvider;
   weth: WETH9Mocked;
   aWETH: AToken;
+  zeebu: MintableERC20;
   faucetMintable: Faucet;
   dai: MintableERC20;
   aDai: AToken;
@@ -68,6 +69,7 @@ export interface TestEnv {
   addressesProvider: PoolAddressesProvider;
   registry: PoolAddressesProviderRegistry;
   aclManager: ACLManager;
+  flashLiquidationAdapter: FlashLiquidationAdapter;
 }
 
 let HardhatSnapshotId: string = '0x1';
@@ -99,6 +101,7 @@ const testEnv: TestEnv = {
   addressesProvider: {} as PoolAddressesProvider,
   registry: {} as PoolAddressesProviderRegistry,
   aclManager: {} as ACLManager,
+  zeebu: {} as MintableERC20,
 } as TestEnv;
 
 export async function initializeMakeSuite() {
@@ -167,6 +170,12 @@ export async function initializeMakeSuite() {
   testEnv.aave = await getMintableERC20(aaveAddress);
   testEnv.usdc = await getMintableERC20(usdcAddress);
   testEnv.weth = await getWETHMocked(wethAddress);
+
+  // Deploy and initialize zeebu token for tests
+  const zeebuFactory = await hre.ethers.getContractFactory('MintableERC20');
+  const zeebu = await zeebuFactory.deploy('Zeebu', 'ZBU', 18);
+  await zeebu.deployed();
+  testEnv.zeebu = zeebu as MintableERC20;
 
   // Support direct minting
   const testReserves = reservesTokens.map((x) => x.tokenAddress);
