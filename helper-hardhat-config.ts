@@ -13,40 +13,44 @@ const FORK_BLOCK_NUMBER = process.env.FORK_BLOCK_NUMBER
   : 0;
 
 const GWEI = 1000 * 1000 * 1000;
+const FORK_URL = process.env.FORK_URL || false;
 
 export const buildForkConfig = (): HardhatNetworkForkingUserConfig | undefined => {
-  let forkMode: HardhatNetworkForkingUserConfig | undefined;
+  let forkMode: any;
   if (FORK) {
     forkMode = {
-      url: NETWORKS_RPC_URL[FORK as eEthereumNetwork],
+      url: NETWORKS_RPC_URL[FORK as keyof typeof NETWORKS_RPC_URL],
     };
-    if (FORK_BLOCK_NUMBER || BLOCK_TO_FORK[FORK as eEthereumNetwork]) {
-      forkMode.blockNumber = FORK_BLOCK_NUMBER || BLOCK_TO_FORK[FORK as eEthereumNetwork];
+    if (FORK_BLOCK_NUMBER || BLOCK_TO_FORK[FORK as keyof typeof BLOCK_TO_FORK]) {
+      (forkMode as any).blockNumber =
+        FORK_BLOCK_NUMBER || BLOCK_TO_FORK[FORK as keyof typeof BLOCK_TO_FORK];
     }
   }
   return forkMode;
 };
 
 export const NETWORKS_RPC_URL: iParamsPerNetwork<string> = {
-  [eEthereumNetwork.kovan]: ALCHEMY_KEY
-    ? `https://eth-kovan.alchemyapi.io/v2/${ALCHEMY_KEY}`
-    : `https://kovan.infura.io/v3/${INFURA_KEY}`,
-  [eEthereumNetwork.ropsten]: ALCHEMY_KEY
-    ? `https://eth-ropsten.alchemyapi.io/v2/${ALCHEMY_KEY}`
-    : `https://ropsten.infura.io/v3/${INFURA_KEY}`,
   [eEthereumNetwork.main]: ALCHEMY_KEY
     ? `https://eth-mainnet.alchemyapi.io/v2/${ALCHEMY_KEY}`
     : `https://mainnet.infura.io/v3/${INFURA_KEY}`,
-  [eEthereumNetwork.coverage]: 'http://localhost:8555',
   [eEthereumNetwork.hardhat]: 'http://localhost:8545',
-  [eEthereumNetwork.tenderlyMain]: `https://rpc.tenderly.co/fork/${TENDERLY_FORK_ID}`,
+  [eEthereumNetwork.sepolia]: `https://sepolia.infura.io/v3/${INFURA_KEY}`,
+  [eEthereumNetwork.baseSepolia]: `https://base-sepolia.infura.io/v3/${INFURA_KEY}`,
+  [eEthereumNetwork.bscTestnet]: `https://bsc-testnet.infura.io/v3/${INFURA_KEY}`,
+};
+
+export const NETWORKS_DEFAULT_GAS: iParamsPerNetwork<number> = {
+  [eEthereumNetwork.main]: 65 * GWEI,
+  [eEthereumNetwork.hardhat]: 65 * GWEI,
+  [eEthereumNetwork.sepolia]: 85 * GWEI,
+  [eEthereumNetwork.baseSepolia]: 65 * GWEI,
+  [eEthereumNetwork.bscTestnet]: 65 * GWEI,
 };
 
 export const BLOCK_TO_FORK: iParamsPerNetwork<number | undefined> = {
-  [eEthereumNetwork.main]: 12406069,
-  [eEthereumNetwork.kovan]: undefined,
-  [eEthereumNetwork.ropsten]: undefined,
-  [eEthereumNetwork.coverage]: undefined,
+  [eEthereumNetwork.main]: undefined, //12406069,
+  [eEthereumNetwork.sepolia]: undefined,
+  [eEthereumNetwork.baseSepolia]: undefined,
+  [eEthereumNetwork.bscTestnet]: undefined,
   [eEthereumNetwork.hardhat]: undefined,
-  [eEthereumNetwork.tenderlyMain]: 12406069,
 };
