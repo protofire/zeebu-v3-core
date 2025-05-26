@@ -1,9 +1,8 @@
-import path from 'path';
-import { HardhatUserConfig } from 'hardhat/types';
 // @ts-ignore
 import { accounts } from './test-wallets.js';
 import { COVERAGE_CHAINID, HARDHAT_CHAINID } from './helpers/constants';
 import { buildForkConfig } from './helper-hardhat-config';
+import './helpers/load-tasks';
 
 require('dotenv').config();
 
