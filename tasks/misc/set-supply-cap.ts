@@ -31,10 +31,12 @@ task('set-supply-cap', 'Set the supply cap for an asset in the Aave V3 Pool Conf
     );
 
     // Convert supply cap from ETH to wei
-    const suppyCapInWei = hre.ethers.utils.parseEther(supplyCap);
+    // const suppyCapInWei = hre.ethers.utils.parseEther(supplyCap);
+
+    console.log('Supply cap:', supplyCap);
 
     // Set the supply cap
-    const tx = await configuratorContract.setSupplyCap(asset, suppyCapInWei);
+    const tx = await configuratorContract.setSupplyCap(asset, supplyCap);
     await tx.wait();
 
     console.log('Asset:', asset);

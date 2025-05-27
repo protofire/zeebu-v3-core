@@ -53,11 +53,11 @@ task(
         console.log(`Supply cap: ${config.supplyCap}`);
 
         // Set the supply cap
-        const tx = await configuratorContract.setSupplyCap(
-          config.address,
-          hre.ethers.utils.parseEther(config.supplyCap)
-        );
+        const tx = await configuratorContract.setSupplyCap(config.address, config.supplyCap);
         await tx.wait();
+        setTimeout(() => {
+          console.log('Waiting for 5 seconds...');
+        }, 5000);
 
         results.push({
           asset: assetName,
