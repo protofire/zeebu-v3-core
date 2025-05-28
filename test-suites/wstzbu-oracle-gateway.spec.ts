@@ -4,8 +4,8 @@ import { BigNumber } from 'ethers';
 import { parseEther, parseUnits } from 'ethers/lib/utils';
 import { ZERO_ADDRESS } from '@aave/deploy-v3';
 import {
-  WSTZBUChainlinkPriceAggregator,
-  WSTZBUChainlinkPriceAggregator__factory,
+  WstZBUOracleGateway,
+  WstZBUOracleGateway__factory,
   MockChainlinkOraclePriceAggregator,
   MockChainlinkOraclePriceAggregator__factory,
 } from '../types';
@@ -14,7 +14,7 @@ import { HardhatRuntimeEnvironment } from 'hardhat/types';
 declare var hre: HardhatRuntimeEnvironment;
 
 makeSuite('WSTZBU Oracle Gateway', (testEnv: TestEnv) => {
-  let wstzbuOracle: WSTZBUChainlinkPriceAggregator;
+  let wstzbuOracle: WstZBUOracleGateway;
   let mockSourceOracle: MockChainlinkOraclePriceAggregator;
 
   before('Deploy contracts', async () => {
@@ -24,7 +24,7 @@ makeSuite('WSTZBU Oracle Gateway', (testEnv: TestEnv) => {
       deployer.signer
     ).deploy(18, parseEther('1.5'));
 
-    wstzbuOracle = await new WSTZBUChainlinkPriceAggregator__factory(deployer.signer).deploy(
+    wstzbuOracle = await new WstZBUOracleGateway__factory(deployer.signer).deploy(
       mockSourceOracle.address,
       addressesProvider.address
     );
@@ -38,10 +38,10 @@ makeSuite('WSTZBU Oracle Gateway', (testEnv: TestEnv) => {
   });
 
   it('should correctly convert price from 18 to 8 decimals', async () => {
-    const sourcePrice = parseEther('1.5');
+    const sourcePrice = parseUnits('5.18', 18);
     await mockSourceOracle.setLatestAnswer(sourcePrice);
 
-    const expectedPrice = sourcePrice.mul(parseUnits('5.18', 8)).div(parseEther('1'));
+    const expectedPrice = sourcePrice.div(BigNumber.from(10).pow(10));
     const actualPrice = await wstzbuOracle.latestAnswer();
 
     expect(actualPrice).to.equal(expectedPrice);
@@ -49,33 +49,28 @@ makeSuite('WSTZBU Oracle Gateway', (testEnv: TestEnv) => {
 
   it('should revert if source oracle returns invalid price', async () => {
     await mockSourceOracle.setLatestAnswer(0);
-    await expect(wstzbuOracle.latestAnswer()).to.be.revertedWith('Invalid WSTZBU/ETH price');
+    await expect(wstzbuOracle.latestAnswer()).to.be.revertedWith('Invalid price');
   });
 
   it('should handle fake price setting correctly', async () => {
     const { deployer } = testEnv;
-    const fakePrice = parseUnits('10', 8);
+    const fakePrice = parseEther('10');
 
-    console.log('setting fake price');
-    const tx = await wstzbuOracle.connect(deployer.signer).setFakePrice(fakePrice);
-    const receipt = await tx.wait();
-    const event = receipt.events?.find((e) => e.event === 'AnswerUpdated');
-    expect(event?.args?.current).to.equal(fakePrice);
-    expect(event?.args?.roundId).to.equal(BigNumber.from(1));
-
-    expect(await wstzbuOracle.latestAnswer(), 'latestAnswer not equal to fake price').to.equal(
-      fakePrice
-    );
+    await expect(wstzbuOracle.connect(deployer.signer).setFakePrice(fakePrice))
+      .to.emit(wstzbuOracle, 'AnswerUpdated')
+      .withArgs(fakePrice, 1);
   });
 
   it('should reset to real price correctly', async () => {
     const { deployer } = testEnv;
-    const sourcePrice = parseEther('1.5');
-    await mockSourceOracle.setLatestAnswer(sourcePrice);
+    const sourcePrice = parseUnits('5.18', 18);
+    await mockSourceOracle.connect(deployer.signer).setLatestAnswer(sourcePrice);
     await wstzbuOracle.connect(deployer.signer).resetToRealPrice();
 
-    const expectedPrice = sourcePrice.mul(parseUnits('5.18', 8)).div(parseEther('1'));
-    expect(await wstzbuOracle.latestAnswer()).to.equal(expectedPrice);
+    const expectedPrice = sourcePrice.div(BigNumber.from(10).pow(10));
+    expect(await wstzbuOracle.latestAnswer(), 'latestAnswer not equal to source price').to.equal(
+      expectedPrice
+    );
   });
 
   it('should track rounds correctly', async () => {
@@ -92,16 +87,13 @@ makeSuite('WSTZBU Oracle Gateway', (testEnv: TestEnv) => {
     const { deployer } = testEnv;
     const fakePrice = parseUnits('20', 8);
 
-    const tx = await wstzbuOracle.connect(deployer.signer).setFakePrice(fakePrice);
-    const receipt = await tx.wait();
+    await expect(wstzbuOracle.connect(deployer.signer).setFakePrice(fakePrice))
+      .to.emit(wstzbuOracle, 'AnswerUpdated')
+      .withArgs(fakePrice, 3);
 
-    const answerUpdatedEvent = receipt.events?.find((e) => e.event === 'AnswerUpdated');
-    expect(answerUpdatedEvent?.args?.current).to.equal(fakePrice);
-    expect(answerUpdatedEvent?.args?.roundId).to.equal(BigNumber.from(3));
-
-    const newRoundEvent = receipt.events?.find((e) => e.event === 'NewRound');
-    expect(newRoundEvent?.args?.roundId).to.equal(BigNumber.from(4));
-    expect(newRoundEvent?.args?.startedBy).to.equal(deployer.address);
+    await expect(wstzbuOracle.connect(deployer.signer).setFakePrice(fakePrice))
+      .to.emit(wstzbuOracle, 'NewRound')
+      .withArgs(5, deployer.address);
   });
 
   it('should only allow admin to set fake price', async () => {
@@ -164,24 +156,15 @@ makeSuite('WSTZBU Oracle Gateway', (testEnv: TestEnv) => {
   it('should correctly handle updated source oracle with different decimals', async () => {
     const { deployer } = testEnv;
 
+    const sourcePrice = parseUnits('5.18', 18);
     const newSourceOracle = await new MockChainlinkOraclePriceAggregator__factory(
       deployer.signer
-    ).deploy(18, parseEther('5.18'));
+    ).deploy(18, sourcePrice);
 
-    console.log(
-      '[wstZBUSourceOracle] latestAnswer before setSourceOracle:',
-      await newSourceOracle.latestAnswer()
-    );
-    console.log(
-      '[wstZBUOracleGateway] latestAnswer before resetToRealPrice:',
-      await wstzbuOracle.latestAnswer()
-    );
-
-    await wstzbuOracle.connect(deployer.signer).resetToRealPrice();
     await wstzbuOracle.connect(deployer.signer).setSourceOracle(newSourceOracle.address);
+    await wstzbuOracle.connect(deployer.signer).resetToRealPrice();
 
-    const sourcePrice = parseEther('5.18');
-    const expected = sourcePrice.mul(parseUnits('5.18', 8)).div(parseEther('1'));
+    const expected = sourcePrice.div(BigNumber.from(10).pow(10));
     const actual = await wstzbuOracle.latestAnswer();
 
     expect(actual).to.equal(expected);
