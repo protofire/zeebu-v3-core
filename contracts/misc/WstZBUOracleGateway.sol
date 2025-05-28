@@ -10,7 +10,7 @@ import {IACLManager} from '../interfaces/IACLManager.sol';
  * @notice Gateway contract for wstZBU oracle that converts price from 18 decimals to 8 decimals
  * @dev Implements Chainlink Aggregator interface to provide price conversion functionality
  */
-contract WSTZBUChainlinkPriceAggregator is IChainlinkAggregator {
+contract WstZBUOracleGateway is IChainlinkAggregator {
   int256 public WSTZBU_USD_PRICE = 518000000; // $5.18 USD with 8 decimals
   uint256 public currentRoundId = 1;
 
@@ -22,7 +22,7 @@ contract WSTZBUChainlinkPriceAggregator is IChainlinkAggregator {
   mapping(uint256 => int256) private roundAnswers;
   mapping(uint256 => uint256) private roundTimestamps;
 
-  event AnswerUpdated(int256 indexed current, uint256 indexed roundId, uint256 timestamp); // Emitted when the answer is updated
+  event AnswerUpdated(int256 indexed price, uint256 indexed roundId); // Emitted when the answer is updated
   event NewRound(uint256 indexed roundId, address indexed startedBy); // Emitted when a new round is started
   event NewSourceOracle(address indexed newSource); // Emitted when the source oracle is updated
 
@@ -57,7 +57,7 @@ contract WSTZBUChainlinkPriceAggregator is IChainlinkAggregator {
   function setFakePrice(int256 _fakePrice) external onlyAdmin {
     require(_fakePrice >= 0, 'Fake price must be non-negative');
     fakePrice = _fakePrice;
-    emit AnswerUpdated(fakePrice, currentRoundId, block.timestamp);
+    emit AnswerUpdated(fakePrice, currentRoundId);
     _startNewRound(fakePrice);
   }
 
@@ -73,20 +73,15 @@ contract WSTZBUChainlinkPriceAggregator is IChainlinkAggregator {
    * @dev Multiplies WSTZBU/ETH price by WSTZBU_USD_PRICE and scales to 8 decimals
    */
   function latestAnswer() external view override returns (int256) {
-    if (fakePrice > 0) {
-      return fakePrice;
-    }
-
     int256 wstZbuEthPrice = SOURCE_ORACLE.latestAnswer();
-    require(wstZbuEthPrice > 0, 'Invalid WSTZBU/ETH price');
+    require(wstZbuEthPrice > 0, 'Invalid price');
 
-    uint256 wstZbuEthPriceUint = uint256(wstZbuEthPrice);
-    uint256 sourceDecimals = uint256(SOURCE_ORACLE.decimals());
-    uint256 scale = 10 ** sourceDecimals;
+    uint256 price = uint256(wstZbuEthPrice);
+    uint8 fromDecimals = SOURCE_ORACLE.decimals();
+    uint8 toDecimals = this.decimals();
 
-    uint256 wstZbuUsdPrice = (wstZbuEthPriceUint * uint256(WSTZBU_USD_PRICE)) / scale;
-
-    return int256(wstZbuUsdPrice);
+    uint256 scaled = price / (10 ** (fromDecimals - toDecimals));
+    return int256(scaled);
   }
 
   function latestTimestamp() external view override returns (uint256) {
