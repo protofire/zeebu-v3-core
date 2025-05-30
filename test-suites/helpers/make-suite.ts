@@ -57,6 +57,7 @@ export interface TestEnv {
   weth: WETH9Mocked;
   aWETH: AToken;
   zeebu: MintableERC20;
+  aZBU: AToken;
   faucetMintable: Faucet;
   dai: MintableERC20;
   aDai: AToken;
@@ -93,6 +94,7 @@ const testEnv: TestEnv = {
   faucetMintable: {} as Faucet,
   dai: {} as MintableERC20,
   aDai: {} as AToken,
+  aZBU: {} as AToken,
   variableDebtDai: {} as VariableDebtToken,
   stableDebtDai: {} as StableDebtToken,
   aUsdc: {} as AToken,
@@ -134,13 +136,47 @@ export async function initializeMakeSuite() {
 
   testEnv.helpersContract = await getAaveProtocolDataProvider();
 
+  // Initialize ZBU as a reserve ***********************************************************
+
+  // Deploy and initialize zeebu token for tests
+  // const zeebuFactory = await hre.ethers.getContractFactory('MintableERC20');
+  // const zeebu = await zeebuFactory.deploy('Zeebu', 'ZBU', 18);
+  // await zeebu.deployed();
+  // testEnv.zeebu = zeebu as MintableERC20;
+
+  // // Deploy aToken, stable debt, and variable debt token implementations for ZBU
+  // const aTokenFactory = await hre.ethers.getContractFactory('AToken');
+  // const aTokenImpl = await aTokenFactory.deploy(testEnv.pool.address);
+  // await aTokenImpl.initialize(testEnv.pool.address, testEnv.pool.address, testEnv.pool.address, 0, 'ATOKEN_IMPL', 'ATOKEN_IMPL', '0x10');
+
+  // const stableDebtTokenFactory = await hre.ethers.getContractFactory('StableDebtToken');
+  // const stableDebtTokenImpl = await stableDebtTokenFactory.deploy();
+  // await stableDebtTokenImpl.deployed();
+
+  // const variableDebtTokenFactory = await hre.ethers.getContractFactory('VariableDebtToken');
+  // const variableDebtTokenImpl = await variableDebtTokenFactory.deploy();
+  // await variableDebtTokenImpl.deployed();
+
+  const reservesTokens = await testEnv.helpersContract.getAllReservesTokens();
+  // const daiReserve = reservesTokens.find((token) => token.symbol === 'DAI');
+  // const { interestRateStrategyAddress } = await testEnv.helpersContract.getReserveTokensAddresses(daiReserve.tokenAddress);
+
+  // await testEnv.configurator.initReserve(
+  //   zeebu.address,
+  //   aTokenImpl.address,
+  //   stableDebtTokenImpl.address,
+  //   variableDebtTokenImpl.address,
+  //   interestRateStrategyAddress
+  // );
+  // ***************************************************************************************
+
   const allTokens = await testEnv.helpersContract.getAllATokens();
+  console.log('All aTokens:', allTokens);
   const aDaiAddress = allTokens.find((aToken) => aToken.symbol.includes('DAI'))?.tokenAddress;
   const aUsdcAddress = allTokens.find((aToken) => aToken.symbol.includes('USDC'))?.tokenAddress;
   const aWEthAddress = allTokens.find((aToken) => aToken.symbol.includes('WETH'))?.tokenAddress;
+  const aZBUAddress = allTokens.find((aToken) => aToken.symbol.includes('ZBU'))?.tokenAddress;
   const aAaveAddress = allTokens.find((aToken) => aToken.symbol.includes('AAVE'))?.tokenAddress;
-
-  const reservesTokens = await testEnv.helpersContract.getAllReservesTokens();
 
   const daiAddress = reservesTokens.find((token) => token.symbol === 'DAI')?.tokenAddress;
   const {
@@ -155,7 +191,7 @@ export async function initializeMakeSuite() {
     throw 'Missing mandatory atokens';
   }
   if (!daiAddress || !usdcAddress || !aaveAddress || !wethAddress) {
-    throw 'Missing mandatory tokens';
+    throw 'Missing mandatory tokens (DAI or USDC or AAVE or WETH)';
   }
 
   testEnv.faucetMintable = await getFaucet();
@@ -166,16 +202,19 @@ export async function initializeMakeSuite() {
   testEnv.aWETH = await getAToken(aWEthAddress);
   testEnv.aAave = await getAToken(aAaveAddress);
 
-  testEnv.dai = await getMintableERC20(daiAddress);
   testEnv.aave = await getMintableERC20(aaveAddress);
   testEnv.usdc = await getMintableERC20(usdcAddress);
+  testEnv.dai = await getMintableERC20(daiAddress);
   testEnv.weth = await getWETHMocked(wethAddress);
 
-  // Deploy and initialize zeebu token for tests
-  const zeebuFactory = await hre.ethers.getContractFactory('MintableERC20');
-  const zeebu = await zeebuFactory.deploy('Zeebu', 'ZBU', 18);
-  await zeebu.deployed();
-  testEnv.zeebu = zeebu as MintableERC20;
+  // // Now fetch all aTokens (aZBU will be included)
+  // const allTokensAfter = await testEnv.helpersContract.getAllATokens();
+  // console.log('All aTokens:', allTokensAfter);
+  // const aDaiAddressAfter = allTokensAfter.find((aToken) => aToken.symbol.includes('DAI'))?.tokenAddress;
+  // const aZBUAddressAfter = allTokensAfter.find((aToken) => aToken.symbol.includes('ZBU'))?.tokenAddress;
+  // const aUsdcAddressAfter = allTokensAfter.find((aToken) => aToken.symbol.includes('USDC'))?.tokenAddress;
+  // const aWEthAddressAfter = allTokensAfter.find((aToken) => aToken.symbol.includes('WETH'))?.tokenAddress;
+  // const aAaveAddressAfter = allTokensAfter.find((aToken) => aToken.symbol.includes('AAVE'))?.tokenAddress;
 
   // Support direct minting
   const testReserves = reservesTokens.map((x) => x.tokenAddress);
