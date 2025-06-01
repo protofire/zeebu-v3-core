@@ -63,7 +63,7 @@ abstract contract BaseParaSwapSellAdapter is BaseParaSwapAdapter {
       expectedMinAmountOut = expectedMinAmountOut.percentMul(
         PercentageMath.PERCENTAGE_FACTOR - MAX_SLIPPAGE_PERCENT
       );
-      require(expectedMinAmountOut <= minAmountToReceive, 'MIN_AMOUNT_EXCEEDS_MAX_SLIPPAGE');
+      require(expectedMinAmountOut >= minAmountToReceive, 'MIN_AMOUNT_EXCEEDS_MAX_SLIPPAGE');
     }
 
     uint256 balanceBeforeAssetFrom = assetToSwapFrom.balanceOf(address(this));

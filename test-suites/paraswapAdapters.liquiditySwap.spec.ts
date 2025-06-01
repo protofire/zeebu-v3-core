@@ -9,7 +9,16 @@ import { Zero } from '@ethersproject/constants';
 import BigNumber from 'bignumber.js';
 import { ethers } from 'ethers';
 import { MAX_UINT_AMOUNT } from '../helpers/constants';
-import { evmRevert, evmSnapshot, getAToken, getFirstSigner } from '@aave/deploy-v3';
+import {
+  AToken,
+  aave,
+  eContractid,
+  evmRevert,
+  evmSnapshot,
+  getAToken,
+  getContract,
+  getFirstSigner,
+} from '@aave/deploy-v3';
 import { tEthereumAddress } from '../helpers/types';
 const { parseEther } = ethers.utils;
 import {
@@ -77,7 +86,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         } = testEnv;
         const userAddress = user.address;
 
-        // Provide liquidity
         const aaveAmount = await convertToCurrencyDecimals(aave.address, '20000');
         await aave
           .connect(deployer.signer)
@@ -92,7 +100,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         await weth.connect(deployer.signer).approve(pool.address, wethAmount);
         await pool.connect(deployer.signer).deposit(weth.address, wethAmount, deployer.address, 0);
 
-        // Make a deposit for user
         const userWethAmount = await convertToCurrencyDecimals(weth.address, '100');
         await weth
           .connect(user.signer)
@@ -116,11 +123,13 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
 
         const aavePrice = await oracle.getAssetPrice(aave.address);
-        console.log('aavePrice:', aavePrice.toString());
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
+
+        const rawExpectedAmount = await convertToCurrencyDecimals(
           aave.address,
           new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
         );
+
+        const expectedUsdcAmount = rawExpectedAmount.mul(98).div(100);
 
         await mockAugustus
           .connect(user.signer)
@@ -135,7 +144,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         const flashloanPremium = amountWETHtoSwap.mul(9).div(10000);
         const flashloanTotal = amountWETHtoSwap.add(flashloanPremium);
 
-        // User will swap liquidity aEth to zUsdc
         const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
         await aWETH
           .connect(user.signer)
@@ -150,7 +158,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
 
         const params = buildParaSwapLiquiditySwapParams(
           aave.address,
-          expectedUsdcAmount,
+          0,
           0,
           mockAugustusCalldata,
           mockAugustus.address,
@@ -160,14 +168,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           '0x0000000000000000000000000000000000000000000000000000000000000000',
           '0x0000000000000000000000000000000000000000000000000000000000000000'
         );
-
-        console.log('From test:');
-        console.log('userAddress:', userAddress);
-        console.log('paraswapLiquiditySwapAdapter.address:', paraswapLiquiditySwapAdapter.address);
-        console.log('weth.address:', weth.address);
-        console.log('amountWETHtoSwap:', amountWETHtoSwap);
-        console.log('expectedUsdcAmount:', expectedUsdcAmount);
-        console.log('params:', params);
 
         await expect(
           pool
@@ -186,13 +186,12 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
 
         const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
+        const adapterAaveBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
         const userzUsdcBalance = await aAave.balanceOf(userAddress);
         const userAEthBalance = await aWETH.balanceOf(userAddress);
 
-        // N.B. will get some portion of flashloan premium back from the pool
         expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
+        expect(adapterAaveBalance).to.be.eq(Zero);
         expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
         expect(userAEthBalance).to.be.gte(userAEthBalanceBefore.sub(flashloanTotal));
         expect(userAEthBalance).to.be.lte(userAEthBalanceBefore.sub(amountWETHtoSwap));
@@ -230,12 +229,11 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         const flashloanPremium = amountWETHtoSwap.mul(9).div(10000);
         const flashloanTotal = amountWETHtoSwap.add(flashloanPremium);
 
-        // User will swap liquidity aEth to zUsdc
         const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
 
         const chainId = hre.network.config.chainId || 31337;
         const deadline = MAX_UINT_AMOUNT;
-        const nonce = (await aWETH._nonces(userAddress)).toNumber();
+        const nonce = (await aWETH.nonces(userAddress)).toNumber();
         const msgParams = buildPermitParams(
           chainId,
           aWETH.address,
@@ -248,7 +246,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           flashloanTotal.toString()
         );
 
-        const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
+        const ownerPrivateKey = require('../test-wallets.js').accounts[1].secretKey;
         if (!ownerPrivateKey) {
           throw new Error('INVALID_OWNER_PK');
         }
@@ -264,7 +262,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
 
         const params = buildParaSwapLiquiditySwapParams(
           aave.address,
-          expectedUsdcAmount,
+          0,
           0,
           mockAugustusCalldata,
           mockAugustus.address,
@@ -292,13 +290,12 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
 
         const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
+        const adapterAaveBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
         const userzUsdcBalance = await aAave.balanceOf(userAddress);
         const userAEthBalance = await aWETH.balanceOf(userAddress);
 
-        // N.B. will get some portion of flashloan premium back from the pool
         expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
+        expect(adapterAaveBalance).to.be.eq(Zero);
         expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
         expect(userAEthBalance).to.be.gte(userAEthBalanceBefore.sub(flashloanTotal));
         expect(userAEthBalance).to.be.lte(userAEthBalanceBefore.sub(amountWETHtoSwap));
@@ -336,7 +333,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         const flashloanPremium = amountWETHtoSwap.mul(9).div(10000);
         const flashloanTotal = amountWETHtoSwap.add(flashloanPremium);
 
-        // User will swap liquidity aEth to zUsdc
         await aWETH
           .connect(user.signer)
           .approve(paraswapLiquiditySwapAdapter.address, flashloanTotal);
@@ -365,84 +361,85 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           paraswapLiquiditySwapAdapter
             .connect(user.signer)
             .executeOperation([weth.address], [amountWETHtoSwap], [0], userAddress, params)
-        ).to.be.revertedWith('CALLER_MUST_BE_LENDING_POOL');
+        ).to.be.revertedWith('CALLER_MUST_BE_POOL');
       });
 
       it('should work correctly with tokens of different decimals', async () => {
         const {
           users: [user],
-          aave,
+          usdc,
           oracle,
-          weth,
+          aave,
           pool,
           deployer,
-          aAave,
         } = testEnv;
-
         const userAddress = user.address;
 
-        const amountUSDCtoSwap = await convertToCurrencyDecimals(aave.address, '10');
-        const liquidity = await convertToCurrencyDecimals(aave.address, '20000');
+        const amountUSDCtoSwap = await convertToCurrencyDecimals(usdc.address, '10');
+        const liquidity = await convertToCurrencyDecimals(usdc.address, '20000');
 
         const flashloanPremium = amountUSDCtoSwap.mul(9).div(10000);
         const flashloanTotal = amountUSDCtoSwap.add(flashloanPremium);
 
-        // Provider liquidity
-        await aave.functions['mint(address,uint256)'](deployer.address, liquidity);
-        await aave.approve(pool.address, liquidity);
-        await pool.deposit(aave.address, liquidity, deployer.address, 0);
+        await usdc
+          .connect(deployer.signer)
+          .functions['mint(address,uint256)'](deployer.address, liquidity);
+        await usdc.connect(deployer.signer).approve(pool.address, liquidity);
+        await pool.deposit(usdc.address, liquidity, deployer.address, 0);
 
-        // Make a deposit for user
-        await aave
+        await usdc
           .connect(user.signer)
           .functions['mint(address,uint256)'](userAddress, flashloanTotal);
-        await aave.connect(user.signer).approve(pool.address, flashloanTotal);
-        await pool.connect(user.signer).deposit(aave.address, flashloanTotal, userAddress, 0);
+        await usdc.connect(user.signer).approve(pool.address, flashloanTotal);
+        await pool.connect(user.signer).deposit(usdc.address, flashloanTotal, userAddress, 0);
 
+        const usdcPrice = await oracle.getAssetPrice(usdc.address);
         const aavePrice = await oracle.getAssetPrice(aave.address);
 
-        const collateralDecimals = (await aave.decimals()).toString();
-        const principalDecimals = (await aave.decimals()).toString();
+        const collateralDecimals = await usdc.decimals();
+        const principalDecimals = await aave.decimals();
 
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
+        const expectedAaveAmount = await convertToCurrencyDecimals(
           aave.address,
           new BigNumber(amountUSDCtoSwap.toString())
-            .times(
-              new BigNumber(aavePrice.toString()).times(new BigNumber(10).pow(principalDecimals))
-            )
-            .div(
-              new BigNumber(aavePrice.toString()).times(new BigNumber(10).pow(collateralDecimals))
-            )
-            .div(new BigNumber(10).pow(principalDecimals))
+            .times(usdcPrice.toString())
+            .div(aavePrice.toString())
+            .times(new BigNumber(10).pow(principalDecimals - collateralDecimals))
             .toFixed(0)
         );
 
+        const swapAmount = amountUSDCtoSwap
+          .mul(usdcPrice)
+          .div(aavePrice)
+          .mul(ethers.BigNumber.from(10).pow(principalDecimals))
+          .div(ethers.BigNumber.from(10).pow(collateralDecimals));
+
         await mockAugustus.expectSwap(
-          aave.address,
+          usdc.address,
           aave.address,
           amountUSDCtoSwap,
-          amountUSDCtoSwap,
-          expectedUsdcAmount
+          swapAmount,
+          expectedAaveAmount
         );
 
-        const zUSDC = await getAToken(aave.address);
+        const reserveData = await pool.getReserveData(usdc.address);
+        const aTokenAddress = reserveData.aTokenAddress;
+        const aToken = await getContract(eContractid.AToken, aTokenAddress);
 
-        // User will swap liquidity zUSDC to zUsdc
-        const userzUSDCBalanceBefore = await zUSDC.balanceOf(userAddress);
-        await zUSDC
+        await aToken
           .connect(user.signer)
           .approve(paraswapLiquiditySwapAdapter.address, flashloanTotal);
 
         const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          aave.address,
+          usdc.address,
           aave.address,
           amountUSDCtoSwap,
-          expectedUsdcAmount,
+          expectedAaveAmount,
         ]);
 
         const params = buildParaSwapLiquiditySwapParams(
           aave.address,
-          expectedUsdcAmount,
+          0,
           0,
           mockAugustusCalldata,
           mockAugustus.address,
@@ -458,7 +455,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
             .connect(user.signer)
             .flashLoan(
               paraswapLiquiditySwapAdapter.address,
-              [aave.address],
+              [usdc.address],
               [amountUSDCtoSwap],
               [0],
               userAddress,
@@ -467,19 +464,13 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
             )
         )
           .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(aave.address, aave.address, amountUSDCtoSwap, expectedUsdcAmount);
+          .withArgs(usdc.address, aave.address, amountUSDCtoSwap, expectedAaveAmount);
 
-        const adapterUsdcBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userzUSDCBalance = await zUSDC.balanceOf(userAddress);
+        const adapterUsdcBalance = await usdc.balanceOf(paraswapLiquiditySwapAdapter.address);
+        const adapterAaveBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
 
-        // N.B. will get some portion of flashloan premium back from the pool
         expect(adapterUsdcBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userzUSDCBalance).to.be.gte(userzUSDCBalanceBefore.sub(flashloanTotal));
-        expect(userzUSDCBalance).to.be.lte(userzUSDCBalanceBefore.sub(amountUSDCtoSwap));
+        expect(adapterAaveBalance).to.be.eq(Zero);
       });
 
       it('should revert when min amount to receive exceeds the max slippage amount', async () => {
@@ -497,22 +488,24 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
 
         const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
+
+        const rawExpectedAmount = await convertToCurrencyDecimals(
           aave.address,
           new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
         );
+
+        const maxAllowedAmount = rawExpectedAmount.mul(98).div(100);
+
+        const requestedAmount = rawExpectedAmount.mul(99).div(100);
 
         await mockAugustus.expectSwap(
           weth.address,
           aave.address,
           amountWETHtoSwap,
           amountWETHtoSwap,
-          expectedUsdcAmount
+          maxAllowedAmount
         );
 
-        const smallexpectedUsdcAmount = expectedUsdcAmount.div(2);
-
-        // User will swap liquidity aEth to zUsdc
         await aWETH
           .connect(user.signer)
           .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
@@ -521,7 +514,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           weth.address,
           aave.address,
           amountWETHtoSwap,
-          expectedUsdcAmount,
+          maxAllowedAmount,
         ]);
 
         await expect(
@@ -531,7 +524,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
               weth.address,
               aave.address,
               amountWETHtoSwap,
-              smallexpectedUsdcAmount,
+              requestedAmount,
               0,
               mockAugustusCalldata,
               mockAugustus.address,
@@ -574,7 +567,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           expectedUsdcAmount
         );
 
-        // User will swap liquidity aEth to zUsdc
         await aWETH
           .connect(user.signer)
           .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
@@ -587,147 +579,25 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         ]);
 
         await expect(
-          paraswapLiquiditySwapAdapter.connect(user.signer).swapAndDeposit(
-            weth.address,
-            aave.address,
-            amountWETHtoSwap,
-            expectedUsdcAmount,
-            0,
-            mockAugustusCalldata,
-            oracle.address, // using arbitrary contract instead of mock Augustus
-            {
-              amount: 0,
-              deadline: 0,
-              v: 0,
-              r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-            }
-          )
+          paraswapLiquiditySwapAdapter
+            .connect(user.signer)
+            .swapAndDeposit(
+              weth.address,
+              aave.address,
+              amountWETHtoSwap,
+              expectedUsdcAmount,
+              0,
+              mockAugustusCalldata,
+              oracle.address,
+              {
+                amount: 0,
+                deadline: 0,
+                v: 0,
+                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
+                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
+              }
+            )
         ).to.be.revertedWith('INVALID_AUGUSTUS');
-      });
-
-      it('should bubble up errors from Augustus', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        // Add 1 to expected amount so it will fail
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount.add(1),
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('Received amount of tokens are less than expected');
-      });
-
-      it('should revert if Augustus swaps for less than minimum to receive', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-        const actualZbuAmount = expectedUsdcAmount.sub(1);
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          actualZbuAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          actualZbuAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('INSUFFICIENT_AMOUNT_RECEIVED');
       });
 
       it("should revert if Augustus doesn't swap correct amount", async () => {
@@ -743,14 +613,13 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         const userAddress = user.address;
 
         const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
+        const augustusSwapAmount = amountWETHtoSwap.sub(1);
 
         const aavePrice = await oracle.getAssetPrice(aave.address);
         const expectedUsdcAmount = await convertToCurrencyDecimals(
           aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
+          new BigNumber(augustusSwapAmount.toString()).div(aavePrice.toString()).toFixed(0)
         );
-
-        const augustusSwapAmount = amountWETHtoSwap.sub(1);
 
         await mockAugustus.expectSwap(
           weth.address,
@@ -760,7 +629,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           expectedUsdcAmount
         );
 
-        // User will swap liquidity aEth to zUsdc
         await aWETH
           .connect(user.signer)
           .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
@@ -779,7 +647,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
               weth.address,
               aave.address,
               amountWETHtoSwap,
-              expectedUsdcAmount,
+              0,
               0,
               mockAugustusCalldata,
               mockAugustus.address,
@@ -823,11 +691,9 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           expectedUsdcAmount
         );
 
-        // Remove other balance
         const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
+        await aWETH.connect(user.signer).transfer(testEnv.users[1].address, transferAmount);
 
-        // User will swap liquidity aEth to zUsdc
         const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
         expect(userAEthBalanceBefore).to.be.eq(amountWETHtoSwap);
 
@@ -850,7 +716,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
               weth.address,
               aave.address,
               bigAmountToSwap,
-              expectedUsdcAmount,
+              0,
               4 + 2 * 32,
               mockAugustusCalldata,
               mockAugustus.address,
@@ -867,12 +733,12 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
 
         const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
+        const adapterAaveBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
         const userzUsdcBalance = await aAave.balanceOf(userAddress);
         const userAEthBalance = await aWETH.balanceOf(userAddress);
 
         expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
+        expect(adapterAaveBalance).to.be.eq(Zero);
         expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
         expect(userAEthBalance).to.be.eq(Zero);
       });
@@ -906,11 +772,9 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           expectedUsdcAmount
         );
 
-        // Remove other balance
         const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
+        await aWETH.connect(user.signer).transfer(testEnv.users[1].address, transferAmount);
 
-        // User will swap liquidity aEth to zUsdc
         const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
         expect(userAEthBalanceBefore).to.be.eq(amountWETHtoSwap);
 
@@ -918,7 +782,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
 
         const chainId = hre.network.config.chainId || 31337;
         const deadline = MAX_UINT_AMOUNT;
-        const nonce = (await aWETH._nonces(userAddress)).toNumber();
+        const nonce = (await aWETH.nonces(userAddress)).toNumber();
         const msgParams = buildPermitParams(
           chainId,
           aWETH.address,
@@ -931,7 +795,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           bigAmountToSwap.toString()
         );
 
-        const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
+        const ownerPrivateKey = require('../test-wallets.js').accounts[1].secretKey;
         if (!ownerPrivateKey) {
           throw new Error('INVALID_OWNER_PK');
         }
@@ -952,7 +816,7 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
               weth.address,
               aave.address,
               bigAmountToSwap,
-              expectedUsdcAmount,
+              0,
               4 + 2 * 32,
               mockAugustusCalldata,
               mockAugustus.address,
@@ -967,19 +831,19 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
         ).to.emit(paraswapLiquiditySwapAdapter, 'Swapped');
 
         const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
+        const adapterAaveBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
         const userzUsdcBalance = await aAave.balanceOf(userAddress);
         const userAEthBalance = await aWETH.balanceOf(userAddress);
 
         expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
+        expect(adapterAaveBalance).to.be.eq(Zero);
         expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
         expect(userAEthBalance).to.be.eq(Zero);
       });
 
       it('should revert trying to swap all the balance when using a smaller amount', async () => {
         const {
-          users: [user],
+          users: [user, users2],
           weth,
           oracle,
           aave,
@@ -1005,11 +869,9 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
           expectedUsdcAmount
         );
 
-        // Remove other balance
         const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
+        await aWETH.connect(user.signer).transfer(users2.address, transferAmount);
 
-        // User will swap liquidity aEth to zUsdc
         const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
         expect(userAEthBalanceBefore).to.be.eq(amountWETHtoSwap);
 
@@ -1046,1842 +908,6 @@ makeSuite('ParaSwap adapters', (testEnv: TestEnv) => {
             )
         ).to.be.revertedWith('INSUFFICIENT_AMOUNT_TO_SWAP');
       });
-
-      it('should not touch any token balance already in the adapter', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aAave,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        // Put token balances in the adapter
-        const adapterWethBalanceBefore = await convertToCurrencyDecimals(weth.address, '123');
-        await weth.functions['mint(address,uint256)'](
-          paraswapLiquiditySwapAdapter.address,
-          adapterWethBalanceBefore
-        );
-        await weth.transfer(paraswapLiquiditySwapAdapter.address, adapterWethBalanceBefore);
-        const adapterZbuBalanceBefore = await convertToCurrencyDecimals(aave.address, '234');
-        await aave.functions['mint(address,uint256)'](
-          paraswapLiquiditySwapAdapter.address,
-          adapterZbuBalanceBefore
-        );
-        await aave.transfer(paraswapLiquiditySwapAdapter.address, adapterZbuBalanceBefore);
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        )
-          .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(adapterWethBalanceBefore);
-        expect(adapterZbuBalance).to.be.eq(adapterZbuBalanceBefore);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(userAEthBalanceBefore.sub(amountWETHtoSwap));
-      });
     });
-
-    describe('executeOperation with borrowing', () => {
-      beforeEach(async () => {
-        const {
-          users: [user],
-          weth,
-          aave,
-          pool,
-          deployer,
-        } = testEnv;
-        const userAddress = user.address;
-        const borrower = users[1].signer;
-        const borrowerAddress = users[1].address;
-
-        // Provide liquidity
-        const usdcAmount = await convertToCurrencyDecimals(aave.address, '20000');
-        await aave.functions['mint(address,uint256)'](deployer.address, usdcAmount);
-        await aave.approve(pool.address, usdcAmount);
-        await pool.deposit(aave.address, usdcAmount, deployer.address, 0);
-
-        const wethAmount = await convertToCurrencyDecimals(weth.address, '10000');
-        await weth.functions['mint(address,uint256)'](deployer.address, wethAmount);
-        await weth.approve(pool.address, wethAmount);
-        await pool.deposit(weth.address, wethAmount, deployer.address, 0);
-
-        // Make a deposit for user
-        const userWethAmount = await convertToCurrencyDecimals(weth.address, '100');
-        await weth.functions['mint(address,uint256)'](userAddress, userWethAmount);
-        await weth.approve(pool.address, userWethAmount);
-        await pool.deposit(weth.address, userWethAmount, userAddress, 0);
-
-        // Add borrowing
-        const collateralAmount = parseEther('10000000');
-        await aave.functions['mint(address,uint256)'](borrowerAddress, collateralAmount);
-        await aave.approve(pool.address, collateralAmount);
-        await pool.deposit(aave.address, collateralAmount, borrowerAddress, 0);
-        await pool
-          .connect(borrower)
-          .borrow(weth.address, parseEther('5000'), 2, 0, borrowerAddress);
-      });
-
-      it('should correctly swap tokens and deposit the out tokens in the pool', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-          aAave,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        const flashloanPremium = amountWETHtoSwap.mul(9).div(10000);
-        const flashloanTotal = amountWETHtoSwap.add(flashloanPremium);
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, flashloanTotal);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        const params = buildParaSwapLiquiditySwapParams(
-          aave.address,
-          expectedUsdcAmount,
-          0,
-          mockAugustusCalldata,
-          mockAugustus.address,
-          0,
-          0,
-          0,
-          '0x0000000000000000000000000000000000000000000000000000000000000000',
-          '0x0000000000000000000000000000000000000000000000000000000000000000'
-        );
-
-        await expect(
-          pool
-            .connect(user.signer)
-            .flashLoan(
-              paraswapLiquiditySwapAdapter.address,
-              [weth.address],
-              [amountWETHtoSwap],
-              [0],
-              userAddress,
-              params,
-              0
-            )
-        )
-          .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.gt(userAEthBalanceBefore.sub(flashloanTotal));
-        expect(userAEthBalance).to.be.lt(
-          userAEthBalanceBefore.mul(10001).div(10000).sub(amountWETHtoSwap)
-        );
-      });
-
-      it('should correctly swap tokens using permit', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-          aAave,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        const flashloanPremium = amountWETHtoSwap.mul(9).div(10000);
-        const flashloanTotal = amountWETHtoSwap.add(flashloanPremium);
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-
-        const chainId = hre.network.config.chainId || 31337;
-        const deadline = MAX_UINT_AMOUNT;
-        const nonce = (await aWETH._nonces(userAddress)).toNumber();
-        const msgParams = buildPermitParams(
-          chainId,
-          aWETH.address,
-          '1',
-          await aWETH.name(),
-          userAddress,
-          paraswapLiquiditySwapAdapter.address,
-          nonce,
-          deadline,
-          amountWETHtoSwap.toString()
-        );
-
-        const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
-        if (!ownerPrivateKey) {
-          throw new Error('INVALID_OWNER_PK');
-        }
-
-        const { v, r, s } = getSignatureFromTypedData(ownerPrivateKey, msgParams);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: amountWETHtoSwap,
-                deadline,
-                v,
-                r,
-                s,
-              }
-            )
-        )
-          .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.gt(userAEthBalanceBefore.sub(amountWETHtoSwap));
-        expect(userAEthBalance).to.be.lt(
-          userAEthBalanceBefore.mul(10001).div(10000).sub(amountWETHtoSwap)
-        );
-      });
-
-      it('should correctly swap all the balance when using a bigger amount', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aAave,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap.add(1),
-          amountWETHtoSwap.mul(10001).div(10000),
-          expectedUsdcAmount
-        );
-
-        // Remove other balance
-        const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
-
-        // User will swap liquidity aEth to zUsdc
-        const bigAmountToSwap = await convertToCurrencyDecimals(aWETH.address, '11');
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, bigAmountToSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          bigAmountToSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              bigAmountToSwap,
-              expectedUsdcAmount,
-              4 + 2 * 32,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.emit(paraswapLiquiditySwapAdapter, 'Swapped');
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(Zero);
-      });
-
-      it('should correctly swap all the balance when using permit', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aAave,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap.add(1),
-          amountWETHtoSwap.mul(10001).div(10000),
-          expectedUsdcAmount
-        );
-
-        // Remove other balance
-        const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
-
-        // User will swap liquidity aEth to zUsdc
-        const bigAmountToSwap = await convertToCurrencyDecimals(aWETH.address, '11');
-
-        const chainId = hre.network.config.chainId || 31337;
-        const deadline = MAX_UINT_AMOUNT;
-        const nonce = (await aWETH._nonces(userAddress)).toNumber();
-        const msgParams = buildPermitParams(
-          chainId,
-          aWETH.address,
-          '1',
-          await aWETH.name(),
-          userAddress,
-          paraswapLiquiditySwapAdapter.address,
-          nonce,
-          deadline,
-          bigAmountToSwap.toString()
-        );
-
-        const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
-        if (!ownerPrivateKey) {
-          throw new Error('INVALID_OWNER_PK');
-        }
-
-        const { v, r, s } = getSignatureFromTypedData(ownerPrivateKey, msgParams);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          bigAmountToSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              bigAmountToSwap,
-              expectedUsdcAmount,
-              4 + 2 * 32,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: bigAmountToSwap,
-                deadline,
-                v,
-                r,
-                s,
-              }
-            )
-        ).to.emit(paraswapLiquiditySwapAdapter, 'Swapped');
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(Zero);
-      });
-    });
-
-    describe('swapAndDeposit', () => {
-      beforeEach(async () => {
-        const {
-          users: [user],
-          weth,
-          aave,
-          pool,
-          deployer,
-        } = testEnv;
-        const userAddress = user.address;
-
-        // Provide liquidity
-        const usdcAmount = await convertToCurrencyDecimals(aave.address, '20000');
-        await aave.functions['mint(address,uint256)'](deployer.address, usdcAmount);
-        await aave.approve(pool.address, usdcAmount);
-        await pool.deposit(aave.address, usdcAmount, deployer.address, 0);
-
-        const wethAmount = await convertToCurrencyDecimals(weth.address, '10000');
-        await weth.functions['mint(address,uint256)'](deployer.address, wethAmount);
-        await weth.approve(pool.address, wethAmount);
-        await pool.deposit(weth.address, wethAmount, deployer.address, 0);
-
-        // Make a deposit for user
-        const userWethAmount = await convertToCurrencyDecimals(weth.address, '100');
-        await weth.functions['mint(address,uint256)'](userAddress, userWethAmount);
-        await weth.approve(pool.address, userWethAmount);
-        await pool.deposit(weth.address, userWethAmount, userAddress, 0);
-      });
-
-      it('should correctly swap tokens and deposit the out tokens in the pool', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-          aAave,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        )
-          .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(userAEthBalanceBefore.sub(amountWETHtoSwap));
-      });
-
-      it('should correctly swap tokens using permit', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-          aAave,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-
-        const chainId = hre.network.config.chainId || 31337;
-        const deadline = MAX_UINT_AMOUNT;
-        const nonce = (await aWETH._nonces(userAddress)).toNumber();
-        const msgParams = buildPermitParams(
-          chainId,
-          aWETH.address,
-          '1',
-          await aWETH.name(),
-          userAddress,
-          paraswapLiquiditySwapAdapter.address,
-          nonce,
-          deadline,
-          amountWETHtoSwap.toString()
-        );
-
-        const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
-        if (!ownerPrivateKey) {
-          throw new Error('INVALID_OWNER_PK');
-        }
-
-        const { v, r, s } = getSignatureFromTypedData(ownerPrivateKey, msgParams);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: amountWETHtoSwap,
-                deadline,
-                v,
-                r,
-                s,
-              }
-            )
-        )
-          .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(userAEthBalanceBefore.sub(amountWETHtoSwap));
-      });
-
-      it('should revert when trying to swap more than balance', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = (await convertToCurrencyDecimals(weth.address, '100')).add(1);
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('SafeERC20: low-level call failed');
-      });
-
-      it('should revert when trying to swap more than allowance', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap.sub(1));
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('SafeERC20: low-level call failed');
-      });
-
-      it('should revert when min amount to receive exceeds the max slippage amount', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        const smallexpectedUsdcAmount = expectedUsdcAmount.div(2);
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              smallexpectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('MIN_AMOUNT_EXCEEDS_MAX_SLIPPAGE');
-      });
-
-      it('should revert if wrong address used for Augustus', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter.connect(user.signer).swapAndDeposit(
-            weth.address,
-            aave.address,
-            amountWETHtoSwap,
-            expectedUsdcAmount,
-            0,
-            mockAugustusCalldata,
-            oracle.address, // using arbitrary contract instead of mock Augustus
-            {
-              amount: 0,
-              deadline: 0,
-              v: 0,
-              r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-            }
-          )
-        ).to.be.revertedWith('INVALID_AUGUSTUS');
-      });
-
-      it('should bubble up errors from Augustus', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        // Add 1 to expected amount so it will fail
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount.add(1),
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('Received amount of tokens are less than expected');
-      });
-
-      it('should revert if Augustus swaps for less than minimum to receive', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-        const actualZbuAmount = expectedUsdcAmount.sub(1);
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          actualZbuAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          actualZbuAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('INSUFFICIENT_AMOUNT_RECEIVED');
-      });
-
-      it("should revert if Augustus doesn't swap correct amount", async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        const augustusSwapAmount = amountWETHtoSwap.sub(1);
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          augustusSwapAmount,
-          augustusSwapAmount,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          augustusSwapAmount,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('WRONG_BALANCE_AFTER_SWAP');
-      });
-
-      it('should correctly swap all the balance when using a bigger amount', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aAave,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // Remove other balance
-        const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-        expect(userAEthBalanceBefore).to.be.eq(amountWETHtoSwap);
-
-        const bigAmountToSwap = await convertToCurrencyDecimals(aWETH.address, '11');
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, bigAmountToSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          bigAmountToSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              bigAmountToSwap,
-              expectedUsdcAmount,
-              4 + 2 * 32,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        )
-          .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(Zero);
-      });
-
-      it('should correctly swap all the balance when using permit', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aAave,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // Remove other balance
-        const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-        expect(userAEthBalanceBefore).to.be.eq(amountWETHtoSwap);
-
-        const bigAmountToSwap = await convertToCurrencyDecimals(aWETH.address, '11');
-
-        const chainId = hre.network.config.chainId || 31337;
-        const deadline = MAX_UINT_AMOUNT;
-        const nonce = (await aWETH._nonces(userAddress)).toNumber();
-        const msgParams = buildPermitParams(
-          chainId,
-          aWETH.address,
-          '1',
-          await aWETH.name(),
-          userAddress,
-          paraswapLiquiditySwapAdapter.address,
-          nonce,
-          deadline,
-          bigAmountToSwap.toString()
-        );
-
-        const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
-        if (!ownerPrivateKey) {
-          throw new Error('INVALID_OWNER_PK');
-        }
-
-        const { v, r, s } = getSignatureFromTypedData(ownerPrivateKey, msgParams);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          bigAmountToSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              bigAmountToSwap,
-              expectedUsdcAmount,
-              4 + 2 * 32,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: bigAmountToSwap,
-                deadline,
-                v,
-                r,
-                s,
-              }
-            )
-        ).to.emit(paraswapLiquiditySwapAdapter, 'Swapped');
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(Zero);
-        expect(adapterZbuBalance).to.be.eq(Zero);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(Zero);
-      });
-
-      it('should revert trying to swap all the balance when using a smaller amount', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // Remove other balance
-        const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-        await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-        expect(userAEthBalanceBefore).to.be.eq(amountWETHtoSwap);
-
-        const smallAmountToSwap = (await convertToCurrencyDecimals(aWETH.address, '10')).sub(1);
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, smallAmountToSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          smallAmountToSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              smallAmountToSwap,
-              expectedUsdcAmount,
-              4 + 2 * 32,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        ).to.be.revertedWith('INSUFFICIENT_AMOUNT_TO_SWAP');
-      });
-
-      it('should not touch any token balance already in the adapter', async () => {
-        const {
-          users: [user],
-          weth,
-          oracle,
-          aave,
-          pool,
-          aAave,
-          aWETH,
-        } = testEnv;
-
-        const userAddress = user.address;
-
-        // Put token balances in the adapter
-        const adapterWethBalanceBefore = await convertToCurrencyDecimals(weth.address, '123');
-        await weth.functions['mint(address,uint256)'](
-          paraswapLiquiditySwapAdapter.address,
-          adapterWethBalanceBefore
-        );
-        await weth.transfer(paraswapLiquiditySwapAdapter.address, adapterWethBalanceBefore);
-        const adapterZbuBalanceBefore = await convertToCurrencyDecimals(aave.address, '234');
-        await aave.functions['mint(address,uint256)'](
-          paraswapLiquiditySwapAdapter.address,
-          adapterZbuBalanceBefore
-        );
-        await aave.transfer(paraswapLiquiditySwapAdapter.address, adapterZbuBalanceBefore);
-
-        const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-        const aavePrice = await oracle.getAssetPrice(aave.address);
-        const expectedUsdcAmount = await convertToCurrencyDecimals(
-          aave.address,
-          new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-        );
-
-        await mockAugustus.expectSwap(
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          amountWETHtoSwap,
-          expectedUsdcAmount
-        );
-
-        // User will swap liquidity aEth to zUsdc
-        const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-        await aWETH
-          .connect(user.signer)
-          .approve(paraswapLiquiditySwapAdapter.address, amountWETHtoSwap);
-
-        const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-          weth.address,
-          aave.address,
-          amountWETHtoSwap,
-          expectedUsdcAmount,
-        ]);
-
-        await expect(
-          paraswapLiquiditySwapAdapter
-            .connect(user.signer)
-            .swapAndDeposit(
-              weth.address,
-              aave.address,
-              amountWETHtoSwap,
-              expectedUsdcAmount,
-              0,
-              mockAugustusCalldata,
-              mockAugustus.address,
-              {
-                amount: 0,
-                deadline: 0,
-                v: 0,
-                r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-                s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-              }
-            )
-        )
-          .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-          .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-        const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-        const userzUsdcBalance = await aAave.balanceOf(userAddress);
-        const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-        expect(adapterWethBalance).to.be.eq(adapterWethBalanceBefore);
-        expect(adapterZbuBalance).to.be.eq(adapterZbuBalanceBefore);
-        expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-        expect(userAEthBalance).to.be.eq(userAEthBalanceBefore.sub(amountWETHtoSwap));
-      });
-    });
-
-    // describe('swapAndDeposit with borrowing', () => {
-    //   beforeEach(async () => {
-    //     const { users: [user], weth, aave, pool, deployer } = testEnv;
-    //     const userAddress = user.address;
-    //     const borrower = users[1].signer;
-    //     const borrowerAddress = users[1].address;
-
-    //     // Provide liquidity
-    //     const usdcAmount = await convertToCurrencyDecimals(aave.address, '20000');
-    //     await aave.functions['mint(address,uint256)'](deployer.address, usdcAmount);
-    //     await aave.approve(pool.address, usdcAmount);
-    //     await pool.deposit(aave.address, usdcAmount, deployer.address, 0);
-
-    //     const wethAmount = await convertToCurrencyDecimals(weth.address, '10000');
-    //     await weth.functions['mint(address,uint256)'](deployer.address, wethAmount);
-    //     await weth.approve(pool.address, wethAmount);
-    //     await pool.deposit(weth.address, wethAmount, deployer.address, 0);
-
-    //     // Make a deposit for user
-    //     const userWethAmount = await convertToCurrencyDecimals(weth.address, '100');
-    //     await weth.functions['mint(address,uint256)'](userAddress, userWethAmount);
-    //     await weth.approve(pool.address, userWethAmount);
-    //     await pool.deposit(weth.address, userWethAmount, userAddress, 0);
-
-    //     // Add borrowing
-    //     const collateralAmount = parseEther('10000000');
-    //     await aave.functions['mint(address,uint256)'](borrowerAddress, collateralAmount);
-    //     await aave.approve(pool.address, collateralAmount);
-    //     await pool.deposit(aave.address, collateralAmount, borrowerAddress, 0);
-    //     await pool
-    //       .connect(borrower)
-    //       .borrow(weth.address, parseEther('5000'), 2, 0, borrowerAddress);
-    //   });
-
-    //   it('should correctly swap tokens and deposit the out tokens in the pool', async () => {
-    //     const { users: [user], weth, oracle, aave, pool, aWETH, aAave } = testEnv;
-
-    //     const userAddress = user.address;
-
-    //     const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-    //     const aavePrice = await oracle.getAssetPrice(aave.address);
-    //     const expectedUsdcAmount = await convertToCurrencyDecimals(
-    //       aave.address,
-    //       new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-    //     );
-
-    //     await mockAugustus.expectSwap(
-    //       weth.address,
-    //       aave.address,
-    //       amountWETHtoSwap,
-    //       amountWETHtoSwap,
-    //       expectedUsdcAmount
-    //     );
-
-    //     const flashloanPremium = amountWETHtoSwap.mul(9).div(10000);
-    //     const flashloanTotal = amountWETHtoSwap.add(flashloanPremium);
-
-    //     // User will swap liquidity aEth to zUsdc
-    //     const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-    //     await aWETH.connect(user.signer).approve(paraswapLiquiditySwapAdapter.address, flashloanTotal);
-
-    //     const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-    //       weth.address,
-    //       aave.address,
-    //       amountWETHtoSwap,
-    //       expectedUsdcAmount,
-    //     ]);
-
-    //     const params = buildParaSwapLiquiditySwapParams(
-    //       aave.address,
-    //       expectedUsdcAmount,
-    //       0,
-    //       mockAugustusCalldata,
-    //       mockAugustus.address,
-    //       0,
-    //       0,
-    //       0,
-    //       '0x0000000000000000000000000000000000000000000000000000000000000000',
-    //       '0x0000000000000000000000000000000000000000000000000000000000000000'
-    //     );
-
-    //     await expect(
-    //       pool
-    //         .connect(user.signer)
-    //         .flashLoan(
-    //           paraswapLiquiditySwapAdapter.address,
-    //           [weth.address],
-    //           [amountWETHtoSwap],
-    //           [0],
-    //           userAddress,
-    //           params,
-    //           0
-    //         )
-    //     )
-    //       .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-    //       .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-    //     const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const userzUsdcBalance = await aAave.balanceOf(userAddress);
-    //     const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-    //     expect(adapterWethBalance).to.be.eq(Zero);
-    //     expect(adapterZbuBalance).to.be.eq(Zero);
-    //     expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-    //     expect(userAEthBalance).to.be.gt(userAEthBalanceBefore.sub(flashloanTotal));
-    //     expect(userAEthBalance).to.be.lt(
-    //       userAEthBalanceBefore.mul(10001).div(10000).sub(amountWETHtoSwap)
-    //     );
-    //   });
-
-    //   it('should correctly swap tokens using permit', async () => {
-    //     const { users: [user], weth, oracle, aave, pool, aWETH, aAave } = testEnv;
-
-    //     const userAddress = user.address;
-
-    //     const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-    //     const aavePrice = await oracle.getAssetPrice(aave.address);
-    //     const expectedUsdcAmount = await convertToCurrencyDecimals(
-    //       aave.address,
-    //       new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-    //     );
-
-    //     await mockAugustus.expectSwap(
-    //       weth.address,
-    //       aave.address,
-    //       amountWETHtoSwap,
-    //       amountWETHtoSwap,
-    //       expectedUsdcAmount
-    //     );
-
-    //     const flashloanPremium = amountWETHtoSwap.mul(9).div(10000);
-    //     const flashloanTotal = amountWETHtoSwap.add(flashloanPremium);
-
-    //     // User will swap liquidity aEth to zUsdc
-    //     const userAEthBalanceBefore = await aWETH.balanceOf(userAddress);
-
-    //     const chainId = hre.network.config.chainId || 31337;
-    //     const deadline = MAX_UINT_AMOUNT;
-    //     const nonce = (await aWETH._nonces(userAddress)).toNumber();
-    //     const msgParams = buildPermitParams(
-    //       chainId,
-    //       aWETH.address,
-    //       '1',
-    //       await aWETH.name(),
-    //       userAddress,
-    //       paraswapLiquiditySwapAdapter.address,
-    //       nonce,
-    //       deadline,
-    //       amountWETHtoSwap.toString()
-    //     );
-
-    //     const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
-    //     if (!ownerPrivateKey) {
-    //       throw new Error('INVALID_OWNER_PK');
-    //     }
-
-    //     const { v, r, s } = getSignatureFromTypedData(ownerPrivateKey, msgParams);
-
-    //     const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-    //       weth.address,
-    //       aave.address,
-    //       amountWETHtoSwap,
-    //       expectedUsdcAmount,
-    //     ]);
-
-    //     await expect(
-    //       paraswapLiquiditySwapAdapter
-    //         .connect(user.signer)
-    //         .swapAndDeposit(
-    //           weth.address,
-    //           aave.address,
-    //           amountWETHtoSwap,
-    //           expectedUsdcAmount,
-    //           0,
-    //           mockAugustusCalldata,
-    //           mockAugustus.address,
-    //           {
-    //             amount: amountWETHtoSwap,
-    //             deadline,
-    //             v,
-    //             r,
-    //             s,
-    //           }
-    //         )
-    //     )
-    //       .to.emit(paraswapLiquiditySwapAdapter, 'Swapped')
-    //       .withArgs(weth.address, aave.address, amountWETHtoSwap, expectedUsdcAmount);
-
-    //     const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const userzUsdcBalance = await aAave.balanceOf(userAddress);
-    //     const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-    //     expect(adapterWethBalance).to.be.eq(Zero);
-    //     expect(adapterZbuBalance).to.be.eq(Zero);
-    //     expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-    //     expect(userAEthBalance).to.be.gt(userAEthBalanceBefore.sub(amountWETHtoSwap));
-    //     expect(userAEthBalance).to.be.lt(
-    //       userAEthBalanceBefore.mul(10001).div(10000).sub(amountWETHtoSwap)
-    //     );
-    //   });
-
-    //   it('should correctly swap all the balance when using a bigger amount', async () => {
-    //     const { users: [user], weth, oracle, aave, pool, aAave, aWETH } = testEnv;
-
-    //     const userAddress = user.address;
-
-    //     const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-    //     const aavePrice = await oracle.getAssetPrice(aave.address);
-    //     const expectedUsdcAmount = await convertToCurrencyDecimals(
-    //       aave.address,
-    //       new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-    //     );
-
-    //     await mockAugustus.expectSwap(
-    //       weth.address,
-    //       aave.address,
-    //       amountWETHtoSwap.add(1),
-    //       amountWETHtoSwap.mul(10001).div(10000),
-    //       expectedUsdcAmount
-    //     );
-
-    //     // Remove other balance
-    //     const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-    //     await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
-
-    //     // User will swap liquidity aEth to zUsdc
-    //     const bigAmountToSwap = await convertToCurrencyDecimals(aWETH.address, '11');
-    //     await aWETH.connect(user.signer).approve(paraswapLiquiditySwapAdapter.address, bigAmountToSwap);
-
-    //     const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-    //       weth.address,
-    //       aave.address,
-    //       bigAmountToSwap,
-    //       expectedUsdcAmount,
-    //     ]);
-
-    //     await expect(
-    //       paraswapLiquiditySwapAdapter
-    //         .connect(user.signer)
-    //         .swapAndDeposit(
-    //           weth.address,
-    //           aave.address,
-    //           bigAmountToSwap,
-    //           expectedUsdcAmount,
-    //           4 + 2 * 32,
-    //           mockAugustusCalldata,
-    //           mockAugustus.address,
-    //           {
-    //             amount: 0,
-    //             deadline: 0,
-    //             v: 0,
-    //             r: '0x0000000000000000000000000000000000000000000000000000000000000000',
-    //             s: '0x0000000000000000000000000000000000000000000000000000000000000000',
-    //           }
-    //         )
-    //     ).to.emit(paraswapLiquiditySwapAdapter, 'Swapped');
-
-    //     const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const userzUsdcBalance = await aAave.balanceOf(userAddress);
-    //     const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-    //     expect(adapterWethBalance).to.be.eq(Zero);
-    //     expect(adapterZbuBalance).to.be.eq(Zero);
-    //     expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-    //     expect(userAEthBalance).to.be.eq(Zero);
-    //   });
-
-    //   it('should correctly swap all the balance when using permit', async () => {
-    //     const { users: [user], weth, oracle, aave, pool, aAave, aWETH } = testEnv;
-
-    //     const userAddress = user.address;
-
-    //     const amountWETHtoSwap = await convertToCurrencyDecimals(weth.address, '10');
-
-    //     const aavePrice = await oracle.getAssetPrice(aave.address);
-    //     const expectedUsdcAmount = await convertToCurrencyDecimals(
-    //       aave.address,
-    //       new BigNumber(amountWETHtoSwap.toString()).div(aavePrice.toString()).toFixed(0)
-    //     );
-
-    //     await mockAugustus.expectSwap(
-    //       weth.address,
-    //       aave.address,
-    //       amountWETHtoSwap.add(1),
-    //       amountWETHtoSwap.mul(10001).div(10000),
-    //       expectedUsdcAmount
-    //     );
-
-    //     // Remove other balance
-    //     const transferAmount = await convertToCurrencyDecimals(aWETH.address, '90');
-    //     await aWETH.connect(user.signer).transfer(users[1].address, transferAmount);
-
-    //     // User will swap liquidity aEth to zUsdc
-    //     const bigAmountToSwap = await convertToCurrencyDecimals(aWETH.address, '11');
-
-    //     const chainId = hre.network.config.chainId || 31337;
-    //     const deadline = MAX_UINT_AMOUNT;
-    //     const nonce = (await aWETH._nonces(userAddress)).toNumber();
-    //     const msgParams = buildPermitParams(
-    //       chainId,
-    //       aWETH.address,
-    //       '1',
-    //       await aWETH.name(),
-    //       userAddress,
-    //       paraswapLiquiditySwapAdapter.address,
-    //       nonce,
-    //       deadline,
-    //       bigAmountToSwap.toString()
-    //     );
-
-    //     const ownerPrivateKey = require('../../test-wallets.js').accounts[1].secretKey;
-    //     if (!ownerPrivateKey) {
-    //       throw new Error('INVALID_OWNER_PK');
-    //     }
-
-    //     const { v, r, s } = getSignatureFromTypedData(ownerPrivateKey, msgParams);
-
-    //     const mockAugustusCalldata = mockAugustus.interface.encodeFunctionData('swap', [
-    //       weth.address,
-    //       aave.address,
-    //       bigAmountToSwap,
-    //       expectedUsdcAmount,
-    //     ]);
-
-    //     await expect(
-    //       paraswapLiquiditySwapAdapter
-    //         .connect(user.signer)
-    //         .swapAndDeposit(
-    //           weth.address,
-    //           aave.address,
-    //           bigAmountToSwap,
-    //           expectedUsdcAmount,
-    //           4 + 2 * 32,
-    //           mockAugustusCalldata,
-    //           mockAugustus.address,
-    //           {
-    //             amount: bigAmountToSwap,
-    //             deadline,
-    //             v,
-    //             r,
-    //             s,
-    //           }
-    //         )
-    //     ).to.emit(paraswapLiquiditySwapAdapter, 'Swapped');
-
-    //     const adapterWethBalance = await weth.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const adapterZbuBalance = await aave.balanceOf(paraswapLiquiditySwapAdapter.address);
-    //     const userzUsdcBalance = await aAave.balanceOf(userAddress);
-    //     const userAEthBalance = await aWETH.balanceOf(userAddress);
-
-    //     expect(adapterWethBalance).to.be.eq(Zero);
-    //     expect(adapterZbuBalance).to.be.eq(Zero);
-    //     expect(userzUsdcBalance).to.be.eq(expectedUsdcAmount);
-    //     expect(userAEthBalance).to.be.eq(Zero);
-    //   });
-    // });
   });
 });

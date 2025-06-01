@@ -11,7 +11,6 @@ import {IAaveIncentivesController} from '../../../interfaces/IAaveIncentivesCont
 import {IPoolAddressesProvider} from '../../../interfaces/IPoolAddressesProvider.sol';
 import {IPool} from '../../../interfaces/IPool.sol';
 import {IACLManager} from '../../../interfaces/IACLManager.sol';
-import {console} from 'hardhat/console.sol';
 
 /**
  * @title IncentivizedERC20
@@ -147,12 +146,6 @@ abstract contract IncentivizedERC20 is Context, IERC20Detailed {
     uint256 amount
   ) external virtual override returns (bool) {
     uint128 castAmount = amount.toUint128();
-    console.log('sender:', sender);
-    console.log('recipient:', recipient);
-    console.log('amount:', amount);
-    console.log('castAmount:', castAmount);
-    console.log('allowance:', _allowances[sender][_msgSender()]);
-    console.log('allowance - castAmount:', _allowances[sender][_msgSender()] - castAmount);
     _approve(sender, _msgSender(), _allowances[sender][_msgSender()] - castAmount);
     _transfer(sender, recipient, castAmount);
     return true;
