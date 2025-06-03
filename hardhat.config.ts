@@ -1,22 +1,14 @@
+// @ts-ignore
+import { accounts } from './test-wallets.js';
+import './helpers/load-tasks';
 import path from 'path';
 import fs from 'fs';
 import { HardhatUserConfig } from 'hardhat/types';
 // @ts-ignore
 import { accounts } from './test-wallets.js';
-import {
-  eAvalancheNetwork,
-  eEthereumNetwork,
-  eNetwork,
-  ePolygonNetwork,
-  eXDaiNetwork,
-} from './helpers/types';
+import { eEthereumNetwork, eNetwork } from './helpers/types';
 import { BUIDLEREVM_CHAINID, COVERAGE_CHAINID } from './helpers/constants';
-import {
-  NETWORKS_RPC_URL,
-  NETWORKS_DEFAULT_GAS,
-  BLOCK_TO_FORK,
-  buildForkConfig,
-} from './helper-hardhat-config';
+import { NETWORKS_RPC_URL, NETWORKS_DEFAULT_GAS, buildForkConfig } from './helper-hardhat-config';
 
 require('dotenv').config();
 
