@@ -1,4 +1,4 @@
-import { ethers } from 'ethers';
+import { ethers, BigNumberish } from 'ethers';
 import { signTypedData_v4 } from 'eth-sig-util';
 import { fromRpcSig, ECDSASignature } from 'ethereumjs-util';
 import { tEthereumAddress, tStringTokenSmallUnits } from './types';
@@ -133,4 +133,36 @@ export const getProxyAdmin = async (proxyAddress: string) => {
     .decode(['address'], adminStorageSlot)
     .toString();
   return ethers.utils.getAddress(adminAddress);
+};
+
+export const buildParaSwapLiquiditySwapParams = (
+  assetToSwapTo: tEthereumAddress,
+  minAmountToReceive: BigNumberish,
+  swapAllBalanceOffset: BigNumberish,
+  swapCalldata: string | Buffer,
+  augustus: tEthereumAddress,
+  permitAmount: BigNumberish,
+  deadline: BigNumberish,
+  v: BigNumberish,
+  r: string | Buffer,
+  s: string | Buffer
+) => {
+  return ethers.utils.defaultAbiCoder.encode(
+    [
+      'address',
+      'uint256',
+      'uint256',
+      'bytes',
+      'address',
+      'tuple(uint256,uint256,uint8,bytes32,bytes32)',
+    ],
+    [
+      assetToSwapTo,
+      minAmountToReceive,
+      swapAllBalanceOffset,
+      swapCalldata,
+      augustus,
+      [permitAmount, deadline, v, r, s],
+    ]
+  );
 };
