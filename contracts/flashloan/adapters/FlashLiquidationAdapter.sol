@@ -121,8 +121,9 @@ contract FlashLiquidationAdapterV3 is FlashLoanReceiverBase {
 
     IERC20(borrowedAsset).approve(address(POOL), vars.flashLoanDebt);
 
-    if (vars.remainingTokens > 0) {
-      IERC20(collateralAsset).transfer(initiator, vars.remainingTokens);
+    uint256 contractCollateralBalance = IERC20(collateralAsset).balanceOf(address(this));
+    if (contractCollateralBalance > 0) {
+      IERC20(collateralAsset).transfer(initiator, contractCollateralBalance);
     }
   }
 
