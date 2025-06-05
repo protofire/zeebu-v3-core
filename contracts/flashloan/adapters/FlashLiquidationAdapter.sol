@@ -11,6 +11,7 @@ import {IPriceOracleGetter} from '../../interfaces/IPriceOracleGetter.sol';
 import {IAToken} from '../../interfaces/IAToken.sol';
 import {ReserveConfiguration} from '../../protocol/libraries/configuration/ReserveConfiguration.sol';
 import {IPool} from '../../interfaces/IPool.sol';
+import {console} from 'hardhat/console.sol';
 
 contract FlashLiquidationAdapterV3 is FlashLoanReceiverBase {
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
@@ -50,6 +51,9 @@ contract FlashLiquidationAdapterV3 is FlashLoanReceiverBase {
     address initiator,
     bytes calldata params
   ) external override returns (bool) {
+    console.log('Solidity');
+    console.log('sender:', msg.sender);
+    console.log('pool:', address(POOL));
     require(msg.sender == address(POOL), 'CALLER_MUST_BE_POOL');
 
     LiquidationParams memory decodedParams = _decodeParams(params);
