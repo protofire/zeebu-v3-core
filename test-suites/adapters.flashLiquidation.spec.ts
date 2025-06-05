@@ -7,9 +7,14 @@ import {
   MockFaucetInteractor,
   MockFaucetInteractor__factory,
   MockUniswapV3Router__factory,
+  FlashLiquidationAdapterV3__factory,
 } from '../types';
 import { parseEther, parseUnits } from 'ethers/lib/utils';
+import { buildFlashLiquidationAdapterParams } from './helpers/contracts-helpers';
 const { expect } = require('chai');
+import { HardhatRuntimeEnvironment } from 'hardhat/types';
+
+declare var hre: HardhatRuntimeEnvironment;
 
 makeSuite('Testnet adapters', (testEnv: TestEnv) => {
   let mockUniswapRouter: MockUniswapV3Router;
@@ -38,9 +43,9 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
 
     describe('UniswapV2RouterTestnet operations', () => {
       it('should correctly set token prices', async () => {
-        const { weth, zeebu } = testEnv;
+        const { weth, aave } = testEnv;
 
-        const tokens = [weth.address, zeebu.address];
+        const tokens = [weth.address, aave.address];
         const prices = [ethers.utils.parseEther('1'), ethers.utils.parseEther('0.5')];
         const isMintable = [true, true];
 
@@ -51,10 +56,10 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
 
       it('should correctly handle swapTokensForExactTokens', async () => {
         userWallet += 1;
-        const { weth, zeebu, users } = testEnv;
+        const { weth, aave, users } = testEnv;
         const user = users[userWallet];
 
-        const path = [zeebu.address, weth.address];
+        const path = [aave.address, weth.address];
         const prices = [ethers.utils.parseEther('0.001'), ethers.utils.parseEther('1')];
         const isMintable = [false, false];
 
@@ -69,14 +74,14 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
         const amountIn = parseEther('1000');
         const expectedAmountOut = parseEther('1');
 
-        await zeebu
+        await aave
           .connect(testEnv.deployer.signer)
           .functions['mint(address,uint256)'](user.address, amountIn);
-        await zeebu.connect(user.signer).approve(mockUniswapRouter.address, amountIn);
+        await aave.connect(user.signer).approve(mockUniswapRouter.address, amountIn);
 
         await expect(
           mockUniswapRouter.connect(user.signer).exactOutputSingle({
-            tokenIn: zeebu.address,
+            tokenIn: aave.address,
             tokenOut: weth.address,
             fee: 3000,
             recipient: user.address,
@@ -87,14 +92,14 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
           })
         )
           .to.emit(mockUniswapRouter, 'Swapped')
-          .withArgs(zeebu.address, weth.address, amountIn, expectedAmountOut);
+          .withArgs(aave.address, weth.address, amountIn, expectedAmountOut);
       });
 
       it('should correctly handle exactOutputSingle', async () => {
         userWallet += 1;
-        const { weth, zeebu, users } = testEnv;
+        const { weth, aave, users } = testEnv;
         const user = users[userWallet];
-        const tokens = [zeebu.address, weth.address];
+        const tokens = [aave.address, weth.address];
         const prices = [ethers.utils.parseEther('0.001'), ethers.utils.parseEther('1')];
         const isMintable = [false, false];
 
@@ -109,13 +114,13 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
         const amountIn = parseEther('1000');
         const expectedAmountOut = parseEther('1');
 
-        await zeebu
+        await aave
           .connect(testEnv.deployer.signer)
           .functions['mint(address,uint256)'](user.address, amountIn);
-        await zeebu.connect(user.signer).approve(mockUniswapRouter.address, amountIn);
+        await aave.connect(user.signer).approve(mockUniswapRouter.address, amountIn);
 
         const tx = await mockUniswapRouter.connect(user.signer).exactInputSingle({
-          tokenIn: zeebu.address,
+          tokenIn: aave.address,
           tokenOut: weth.address,
           fee: 3000,
           recipient: user.address,
@@ -127,15 +132,15 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
 
         await expect(tx, 'Swap event is not emitted or not correct')
           .to.emit(mockUniswapRouter, 'Swapped')
-          .withArgs(zeebu.address, weth.address, amountIn, expectedAmountOut);
+          .withArgs(aave.address, weth.address, amountIn, expectedAmountOut);
       });
 
       it('should revert if token prices not set', async () => {
         userWallet += 1;
-        const { weth, zeebu, users } = testEnv;
+        const { weth, aave, users } = testEnv;
         const user = users[userWallet];
 
-        const tokens = [weth.address, zeebu.address];
+        const tokens = [weth.address, aave.address];
         const prices = [0, 0];
         const isMintable = [false, false];
 
@@ -145,7 +150,7 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
         await weth
           .connect(testEnv.deployer.signer)
           .functions['mint(address,uint256)'](mockUniswapRouter.address, routerAmount);
-        await zeebu
+        await aave
           .connect(testEnv.deployer.signer)
           .functions['mint(address,uint256)'](mockUniswapRouter.address, routerAmount);
 
@@ -158,7 +163,7 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
         await expect(
           mockUniswapRouter.connect(user.signer).exactOutputSingle({
             tokenIn: weth.address,
-            tokenOut: zeebu.address,
+            tokenOut: aave.address,
             fee: 3000,
             recipient: user.address,
             deadline: MAX_UINT_AMOUNT,
@@ -250,6 +255,101 @@ makeSuite('Testnet adapters', (testEnv: TestEnv) => {
         await expect(tx, 'Swap event is not emitted or not correct')
           .to.emit(mockUniswapRouter, 'Swapped')
           .withArgs(usdc.address, weth.address, expectedAmountIn, amountOut);
+      });
+    });
+
+    describe('FlashLiquidationAdapterV3', () => {
+      let flashLiquidationAdapter: any;
+      let router: MockUniswapV3Router;
+
+      beforeEach(async () => {
+        const { deployer, pool, addressesProvider } = testEnv;
+        router = await new MockUniswapV3Router__factory(deployer.signer).deploy(
+          faucetInteractor.address
+        );
+        flashLiquidationAdapter = await new FlashLiquidationAdapterV3__factory(
+          deployer.signer
+        ).deploy(addressesProvider.address, router.address);
+      });
+
+      it('should not execute liquidation when health factor is not below threshold', async () => {
+        const {
+          weth,
+          usdc,
+          users: [user],
+          deployer,
+          pool,
+        } = testEnv;
+
+        await mockUniswapRouter.setTokenPrices(
+          [usdc.address, weth.address],
+          [ethers.utils.parseEther('0.001'), ethers.utils.parseEther('1')],
+          [true, true]
+        );
+        const collateralAmount = parseUnits('1000', 6);
+        await usdc
+          .connect(deployer.signer)
+          .functions['mint(address,uint256)'](flashLiquidationAdapter.address, collateralAmount);
+        const flashBorrowedAmount = parseEther('1');
+        await weth
+          .connect(deployer.signer)
+          .functions['mint(address,uint256)'](flashLiquidationAdapter.address, flashBorrowedAmount);
+        const params = buildFlashLiquidationAdapterParams(
+          usdc.address,
+          weth.address,
+          user.address,
+          flashBorrowedAmount,
+          false
+        );
+
+        await hre.network.provider.request({
+          method: 'hardhat_impersonateAccount',
+          params: [pool.address],
+        });
+        const poolImpersonatedSigner = await hre.ethers.getSigner(pool.address);
+
+        await expect(
+          flashLiquidationAdapter
+            .connect(poolImpersonatedSigner)
+            .executeOperation([weth.address], [flashBorrowedAmount], [0], user.address, params)
+        ).to.be.revertedWith('45');
+      });
+
+      it('should not execute liquidation when caller is not pool', async () => {
+        const {
+          weth,
+          usdc,
+          users: [user],
+          deployer,
+          pool,
+        } = testEnv;
+
+        await mockUniswapRouter.setTokenPrices(
+          [usdc.address, weth.address],
+          [ethers.utils.parseEther('0.001'), ethers.utils.parseEther('1')],
+          [true, true]
+        );
+        const collateralAmount = parseUnits('1000', 6);
+        await usdc
+          .connect(deployer.signer)
+          .functions['mint(address,uint256)'](flashLiquidationAdapter.address, collateralAmount);
+        const flashBorrowedAmount = parseEther('1');
+        await weth
+          .connect(deployer.signer)
+          .functions['mint(address,uint256)'](flashLiquidationAdapter.address, flashBorrowedAmount);
+        const params = buildFlashLiquidationAdapterParams(
+          usdc.address,
+          weth.address,
+          user.address,
+          flashBorrowedAmount,
+          false
+        );
+
+        await expect(
+          flashLiquidationAdapter
+            .connect(deployer.signer)
+            .executeOperation([weth.address], [flashBorrowedAmount], [0], user.address, params)
+        ).to.be.revertedWith('CALLER_MUST_BE_POOL');
       });
     });
   });
