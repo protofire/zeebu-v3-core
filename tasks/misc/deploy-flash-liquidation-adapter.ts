@@ -1,11 +1,11 @@
 import { task } from 'hardhat/config';
 
-// How to execute this task:
-// Params:
-// --swapRouter: The address of the SwapRouter contract
-// --poolAddressesProvider: The address of the PoolAddressesProvider contract
-// Example:
-// npx hardhat deploy-flash-liquidation-adapter --swapRouter <swapt-router-address> --poolAddressesProvider <pool-addresses-provider-address>
+// #########################################################
+// Description:
+// This task deploys the FlashLiquidationAdapterV3 contract.
+// Usage:
+// npx hardhat deploy-flash-liquidation-adapter --swap-router <swapt-router-address> --pool-addresses-provider <pool-addresses-provider-address> --network <network>
+// #########################################################
 
 task('deploy-flash-liquidation-adapter', 'Deploy the FlashLiquidationAdapterV3 contract')
   .addParam('swapRouter', 'The address of the SwapRouter contract')
