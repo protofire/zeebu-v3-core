@@ -30,9 +30,7 @@ export const buildForkConfig = (): HardhatNetworkForkingUserConfig | undefined =
 };
 
 export const NETWORKS_RPC_URL: iParamsPerNetwork<string> = {
-  [eEthereumNetwork.main]: ALCHEMY_KEY
-    ? `https://eth-mainnet.alchemyapi.io/v2/${ALCHEMY_KEY}`
-    : `https://mainnet.infura.io/v3/${INFURA_KEY}`,
+  [eEthereumNetwork.main]: `https://mainnet.infura.io/v3/${INFURA_KEY}`,
   [eEthereumNetwork.hardhat]: 'http://localhost:8545',
   [eEthereumNetwork.sepolia]: `https://sepolia.infura.io/v3/${INFURA_KEY}`,
   [eEthereumNetwork.baseSepolia]: `https://base-sepolia.infura.io/v3/${INFURA_KEY}`,
