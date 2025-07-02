@@ -6,6 +6,7 @@ require('dotenv').config();
 
 const INFURA_KEY = process.env.INFURA_KEY || '';
 const ALCHEMY_KEY = process.env.ALCHEMY_KEY || '';
+const TENDERLY_VNET_URL = process.env.TENDERLY_VNET_URL || '';
 const TENDERLY_FORK_ID = process.env.TENDERLY_FORK_ID || '';
 const FORK = process.env.FORK || '';
 const FORK_BLOCK_NUMBER = process.env.FORK_BLOCK_NUMBER
@@ -30,9 +31,7 @@ export const buildForkConfig = (): HardhatNetworkForkingUserConfig | undefined =
 };
 
 export const NETWORKS_RPC_URL: iParamsPerNetwork<string> = {
-  [eEthereumNetwork.main]: ALCHEMY_KEY
-    ? `https://eth-mainnet.alchemyapi.io/v2/${ALCHEMY_KEY}`
-    : `https://mainnet.infura.io/v3/${INFURA_KEY}`,
+  [eEthereumNetwork.main]: TENDERLY_VNET_URL || `https://mainnet.infura.io/v3/${INFURA_KEY}`,
   [eEthereumNetwork.hardhat]: 'http://localhost:8545',
   [eEthereumNetwork.sepolia]: `https://sepolia.infura.io/v3/${INFURA_KEY}`,
   [eEthereumNetwork.baseSepolia]: `https://base-sepolia.infura.io/v3/${INFURA_KEY}`,
